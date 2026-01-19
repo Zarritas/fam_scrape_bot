@@ -196,9 +196,8 @@ def format_competition_details(competition, events: list | None = None) -> str:
     lines = []
 
     # Encabezado
-    date_str = competition.competition_date.strftime("%d/%m/%Y")
     lines.append(f"<b>🏆 {competition.name}</b>")
-    lines.append(f"📅 <b>Fecha:</b> {date_str}")
+    lines.append(f"📅 <b>Fecha:</b> {competition.fecha_display}")
     lines.append(f"📍 <b>Lugar:</b> {competition.location}")
 
     if competition.has_modifications:

@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from src.database.models import Base
 
@@ -36,7 +36,6 @@ def event_loop():
 @pytest.fixture(scope="session")
 async def db_engine():
     """Engine de base de datos para tests."""
-    from src.database.models import Base
 
     engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
 
@@ -67,9 +66,13 @@ def real_pdf_files():
     """Rutas a los archivos PDF reales para tests."""
     test_dir = Path(__file__).parent
     return {
-        "modificado_gallur_2026_01_03.pdf": test_dir / "pdf_examples" / "modificado_gallur_2026_01_03.pdf",
-        "modificado_combinadasabsoluto_gallur_2026_01_17y18.pdf": test_dir / "pdf_examples" / "modificado_combinadasabsoluto_gallur_2026_01_17y18.pdf",
-        "sub23_gallur_2026_01_24.pdf": test_dir / "pdf_examples" / "sub23_gallur_2026_01_24.pdf"
+        "modificado_gallur_2026_01_03.pdf": test_dir
+        / "pdf_examples"
+        / "modificado_gallur_2026_01_03.pdf",
+        "modificado_combinadasabsoluto_gallur_2026_01_17y18.pdf": test_dir
+        / "pdf_examples"
+        / "modificado_combinadasabsoluto_gallur_2026_01_17y18.pdf",
+        "sub23_gallur_2026_01_24.pdf": test_dir / "pdf_examples" / "sub23_gallur_2026_01_24.pdf",
     }
 
 

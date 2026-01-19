@@ -113,7 +113,11 @@ async def method_selected(
             competitions = await comp_repo.get_upcoming()
 
             # Extraer fechas únicas
-            dates = sorted({c.competition_date for c in competitions})
+            dates = (
+                sorted({d for c in competitions for d in c.todas_las_fechas})
+                if competitions
+                else []
+            )
 
             if not dates:
                 await query.edit_message_text(

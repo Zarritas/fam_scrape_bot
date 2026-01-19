@@ -3,14 +3,14 @@ Test de integración completa con datos reales.
 Simula el flujo completo: HTML scraping → PDF parsing → BD → deduplicación → limpieza.
 """
 
-import pytest
 from datetime import date
 from pathlib import Path
 
+import pytest
+
 from src.database.repositories.competition import CompetitionRepository
-from src.scraper.web_scraper import WebScraper
 from src.scraper.pdf_parser import PDFParser
-from src.scheduler.jobs import scraping_job
+from src.scraper.web_scraper import WebScraper
 
 
 class TestFullWorkflowReal:
@@ -73,9 +73,15 @@ class TestFullWorkflowReal:
         """Rutas a los archivos PDF reales."""
         test_dir = Path(__file__).parent.parent
         return {
-            "modificado_gallur_2026_01_03.pdf": test_dir / "pdf_examples" / "modificado_gallur_2026_01_03.pdf",
-            "modificado_combinadasabsoluto_gallur_2026_01_17y18.pdf": test_dir / "pdf_examples" / "modificado_combinadasabsoluto_gallur_2026_01_17y18.pdf",
-            "sub23_gallur_2026_01_24.pdf": test_dir / "pdf_examples" / "sub23_gallur_2026_01_24.pdf"
+            "modificado_gallur_2026_01_03.pdf": test_dir
+            / "pdf_examples"
+            / "modificado_gallur_2026_01_03.pdf",
+            "modificado_combinadasabsoluto_gallur_2026_01_17y18.pdf": test_dir
+            / "pdf_examples"
+            / "modificado_combinadasabsoluto_gallur_2026_01_17y18.pdf",
+            "sub23_gallur_2026_01_24.pdf": test_dir
+            / "pdf_examples"
+            / "sub23_gallur_2026_01_24.pdf",
         }
 
     async def test_full_workflow_scraping_to_cleanup(self, html_content, pdf_files, db_session):
@@ -92,7 +98,7 @@ class TestFullWorkflowReal:
         processed_competitions = []
 
         for raw_comp in raw_competitions:
-            pdf_filename = raw_comp.pdf_url.split('/')[-1]
+            pdf_filename = raw_comp.pdf_url.split("/")[-1]
             pdf_path = pdf_files.get(pdf_filename)
 
             if pdf_path and pdf_path.exists():
@@ -107,7 +113,7 @@ class TestFullWorkflowReal:
                     pdf_url=raw_comp.pdf_url,
                     enrollment_url=raw_comp.enrollment_url,
                     has_modifications=raw_comp.has_modifications,
-                    competition_type=raw_comp.competition_type
+                    competition_type=raw_comp.competition_type,
                 )
 
                 processed_competitions.append(competition)
@@ -123,13 +129,16 @@ class TestFullWorkflowReal:
                 has_modifications=competition.has_modifications,
                 competition_type=competition.competition_type,
                 enrollment_url=competition.enrollment_url,
-                events=[{
-                    "discipline": e.discipline,
-                    "event_type": e.event_type.value,
-                    "sex": e.sex.value,
-                    "scheduled_time": e.scheduled_time,
-                    "category": e.category
-                } for e in competition.events]
+                events=[
+                    {
+                        "discipline": e.discipline,
+                        "event_type": e.event_type.value,
+                        "sex": e.sex.value,
+                        "scheduled_time": e.scheduled_time,
+                        "category": e.category,
+                    }
+                    for e in competition.events
+                ],
             )
 
         # Verificar que se crearon competiciones
@@ -177,7 +186,7 @@ class TestFullWorkflowReal:
             location="Gallur",
             events=[
                 {"discipline": "100m", "event_type": "carrera", "sex": "M", "category": "Absoluto"}
-            ]
+            ],
         )
 
         # Segunda competición (mismo PDF, nombre diferente)
@@ -189,7 +198,7 @@ class TestFullWorkflowReal:
             location="Gallur",
             events=[
                 {"discipline": "200m", "event_type": "carrera", "sex": "F", "category": "Absoluto"}
-            ]
+            ],
         )
 
         # Verificar que se crearon ambas competiciones

@@ -9,7 +9,7 @@ Extrae la lista de competiciones del calendario web, incluyendo:
 """
 
 import re
-from datetime import date
+from datetime import date, timedelta
 from urllib.parse import urljoin
 
 import requests
@@ -152,14 +152,12 @@ class WebScraper:
             raise WebScraperError(f"Error obteniendo calendario: {e}") from e
 
         try:
-            return self.parse_calendar_html(response.text, month, year)
+            return self.parse_calendar_html(response.text, year)
         except Exception as e:
             logger.error(f"Error parseando HTML: {e}")
             raise WebScraperError(f"Error parseando calendario: {e}") from e
 
-    def parse_calendar_html(
-        self, html: str, default_month: int = 1, default_year: int = 2026
-    ) -> list[RawCompetition]:
+    def parse_calendar_html(self, html: str, default_year: int = 2026) -> list[RawCompetition]:
         """
         Parsea el HTML del calendario FAM y extrae las competiciones.
 
@@ -195,14 +193,14 @@ class WebScraper:
                     rows = all_rows[1:]
 
         for row in rows:
-            competition = self._parse_real_competition_row(row, default_month, default_year)
+            competition = self._parse_real_competition_row(row, default_year)
             if competition:
                 competitions.append(competition)
 
         logger.info(f"Encontradas {len(competitions)} competiciones")
         return competitions
 
-    def _parse_real_competition_row(self, row: Tag, month: int, year: int) -> RawCompetition | None:
+    def _parse_real_competition_row(self, row: Tag, year: int) -> RawCompetition | None:
         """
         Parsea una fila de la tabla real del calendario FAM.
 
@@ -215,10 +213,10 @@ class WebScraper:
 
         # Columna 0: Fecha (ej: "03.01 (S)" o "17y18.01 (S-D)")
         date_cell = cells[0]
-        date_str = date_cell.get_text(strip=True)
+        date_str = date_cell.get_text(strip=True).split(" ")[0]  # Quitar día de la semana
 
-        # Parsear fechas múltiples
-        fechas_adicionales = self._extract_additional_dates(date_str)
+        # Parsear fechas
+        dates = self._extract_dates(date_str, year)
 
         # Columna 2: Competición (nombre) - skip columna 1 (Límite)
         name_cell = cells[2]
@@ -257,13 +255,10 @@ class WebScraper:
         if not name or not pdf_url:
             return None
 
-        # Normalizar la fecha para display legible
-        normalized_date = self._normalize_date(date_str, month, year)
-
-        # Crear RawCompetition con soporte para fechas adicionales
+        # Crear RawCompetition con lista de fechas
         competition = RawCompetition(
             name=name,
-            date_str=normalized_date,  # Usar fecha normalizada
+            dates=dates,
             pdf_url=pdf_url,
             enrollment_url=enrollment_url,
             has_modifications=has_modifications,
@@ -271,16 +266,11 @@ class WebScraper:
             competition_type=competition_type,
         )
 
-        # Agregar fechas adicionales como atributo personalizado
-        if fechas_adicionales:
-            competition.fechas_adicionales = fechas_adicionales
-
         return competition
 
     def _parse_competition_row(
         self,
         row: Tag,
-        month: int,
         year: int,
     ) -> RawCompetition | None:
         """
@@ -367,6 +357,8 @@ class WebScraper:
         if len(cells) > 0:
             date_str = cells[0].get_text(strip=True)
 
+        dates = self._extract_dates(date_str, year)
+
         # 7. Tipo de competición (Última columna o Ancla + 3?)
         # La estructura típica es: ... | Regl | Insc | ? | Tipo
         # Regl=4, Insc=5, ?=6, Tipo=7. Diff = +3
@@ -380,7 +372,7 @@ class WebScraper:
 
         return RawCompetition(
             name=name,
-            date_str=self._normalize_date(date_str, month, year),
+            dates=dates,
             pdf_url=pdf_url,
             enrollment_url=enrollment_url,
             has_modifications=has_modifications,
@@ -404,78 +396,100 @@ class WebScraper:
 
         return urljoin(self.base_url, url)
 
-    def _extract_additional_dates(self, date_str: str) -> list[str]:
+    def _extract_dates(self, date_str: str, year: int) -> list[date]:
         """
-        Extrae fechas adicionales de strings como "17y18.01 (S-D)".
+        Extrae una lista de fechas desde un string de fecha del calendario.
+
+        Formatos soportados:
+        - "31.01" -> [date(year, 1, 31)]
+        - "10.02" -> [date(year, 2, 10)]
+        - "05.01" -> [date(year, 1, 5)]
+        - "17y18.01" -> [date(year, 1, 17), date(year, 1, 18)]
+        - "17,18.01" -> [date(year, 1, 17), date(year, 1, 18)]
+        - "24-25.01" -> [date(year, 1, 24), date(year, 1, 25)]
+        - "24-26.01" -> [date(year, 1, 24), date(year, 1, 25), date(year, 1, 26)]
+
+        Args:
+            date_str: String de fecha crudo (ej: "17y18.01")
+            year: Año de la competición
 
         Returns:
-            Lista de fechas adicionales en formato "DD/MM/YYYY"
+            Lista de objetos date ordenados
         """
-        additional_dates = []
+        dates = []
+        if not date_str:
+            return dates
+
+        # Limpiar paréntesis y espacios extra (ej: "17y18.01 (S-D)")
+        cleaned_str = re.sub(r"\s+\([^\)]+\)", "", date_str).strip()
+        cleaned_str = cleaned_str.replace(" ", "")  # Quitar espacios internos
 
         try:
-            # Caso: "17y18.01 (S-D)" -> ["18/01/2026"]
-            range_match = re.match(r"(\d{1,2})y(\d{1,2})\.(\d{2})", date_str)
+            # 1. Detectar separador de mes (usualmente un punto al final: .01)
+            # Buscamos el último punto o barra que separa el mes
+            match = re.search(r"[\./-](\d{2})$", cleaned_str)
+            if not match:
+                return dates
+
+            month_str = match.group(1)
+            month = int(month_str)
+
+            # La parte de los días es todo lo anterior al separador+mes
+            days_part = cleaned_str[: match.start()]
+
+            # Normalizar separadores de días (y, -) a comas para procesamiento uniforme
+            # "17y18" -> "17,18"; "17-19" -> "17-19" (rango)
+
+            # Caso especial: Rangos con guión "24-26"
+            if "-" in days_part:
+                # Asumimos rango simple día-día
+                start_day, end_day = map(int, days_part.split("-"))
+                for day in range(start_day, end_day + 1):
+                    dates.append(date(year, month, day))
+                return dates
+
+        except Exception:
+            # Si falla el anterior, probar otros formatos
+            pass
+
+        try:
+            # Caso rango cruzando meses/formatos complejos: "27.02-01.03"
+            range_match = re.match(r"(\d{1,2})\.(\d{2})-(\d{1,2})\.(\d{2})", cleaned_str)
             if range_match:
-                day1, day2, month_num = range_match.groups()
-                # Solo agregar días adicionales (el día 1 es la fecha principal)
-                if day1 != day2:
-                    # Necesitamos el año del contexto. Por ahora asumimos el año actual
-                    # En una implementación completa, esto vendría del parámetro year
-                    from datetime import date
+                d1, m1, d2, m2 = map(int, range_match.groups())
 
-                    current_year = date.today().year
-                    additional_dates.append(f"{int(day2):02d}/{int(month_num):02d}/{current_year}")
+                # Fecha inicio
+                date1 = date(year, m1, d1)
+                # Fecha fin (cuidado con cambio de año, aunque raro en una temporada)
+                date2 = date(year, m2, d2)
 
-            # Caso: "17,18,19/01" -> ["18/01/2026", "19/01/2026"]
-            comma_match = re.match(r"(\d{1,2})(?:,(\d{1,2}))(?:,(\d{1,2}))?[/-](\d{1,2})", date_str)
-            if comma_match:
-                days = [g for g in comma_match.groups()[:-1] if g]
-                month_num = comma_match.groups()[-1]
+                if date1 <= date2:
+                    current = date1
+                    while current <= date2:
+                        dates.append(current)
+                        current += timedelta(days=1)
+                return dates
+        except Exception as e:
+            logger.warning(f"Error parseando rango complejo '{date_str}': {e}")
 
-                if len(days) > 1:
-                    from datetime import date
+        try:
+            # Volver a intentar el bloque original si no era rango complejo y falló el primer bloque
+            # Re-implementar logica original para listas '17y18'
+            # 1. Detectar separador de mes ... (reparando el flujo)
+            pass  # El bloque original estaba dentro de un try... vamos a reestructurar un poco
 
-                    current_year = date.today().year
-                    # El primer día es la fecha principal, agregar los demás
-                    for day in days[1:]:
-                        additional_dates.append(
-                            f"{int(day):02d}/{int(month_num):02d}/{current_year}"
-                        )
+            # Caso lista de días: "17y18", "17,18"
+            days_part = days_part.replace("y", ",")
+            day_strs = days_part.split(",")
+
+            for day_s in day_strs:
+                if day_s.isdigit():
+                    dates.append(date(year, month, int(day_s)))
 
         except Exception as e:
-            logger.warning(f"Error parseando fechas adicionales de '{date_str}': {e}")
+            logger.warning(f"Error parseando fecha '{date_str}': {e}")
 
-        return additional_dates
-
-    def _normalize_date(self, date_str: str, month: int, year: int) -> str:  # noqa: ARG002
-        """
-        Normaliza el formato de fecha del calendario a formato legible.
-
-        Entrada: "03.01 (S)" o "17y18.01 (S-D)"
-        Salida: "3 enero 2026" o "17-18 enero 2026"
-        """
-        if not date_str:
-            return ""
-
-        # Limpiar paréntesis con día de la semana
-        date_str = re.sub(r"\s*\([^)]*\)", "", date_str).strip()
-
-        # Patrón para fechas con rango: "17y18.01"
-        range_match = re.match(r"(\d{1,2})y(\d{1,2})\.(\d{2})", date_str)
-        if range_match:
-            day1, day2, month_num = range_match.groups()
-            month_name = MONTHS_BY_NUMBER.get(int(month_num), f"mes {month_num}")
-            return f"{int(day1)}-{int(day2)} {month_name} {year}"
-
-        # Patrón para fecha simple: "03.01"
-        simple_match = re.match(r"(\d{1,2})\.(\d{2})", date_str)
-        if simple_match:
-            day, month_num = simple_match.groups()
-            month_name = MONTHS_BY_NUMBER.get(int(month_num), f"mes {month_num}")
-            return f"{int(day)} {month_name} {year}"
-
-        return date_str
+        return sorted(set(dates))
 
     def _has_highlight_background(self, element: Tag) -> bool:
         """
@@ -562,31 +576,19 @@ class WebScraper:
             response.raise_for_status()
 
             # Parsear todas las competiciones
-            all_competitions = self.parse_calendar_html(
-                response.text, 1, 2026
-            )  # Valores por defecto
+            all_competitions = self.parse_calendar_html(response.text, 2026)  # Valores por defecto
 
             # Filtrar por los meses solicitados
             filtered_competitions = []
             for comp in all_competitions:
-                # Intentar parsear la fecha para filtrar
-                try:
-                    if "/" in comp.date_str:
-                        day_month = comp.date_str.split("/")[0:2]
-                        if len(day_month) == 2:
-                            month = int(day_month[1])
-                            # Asumir año actual para filtrado básico
-                            current_year = date.today().year
-                            if (month, current_year) in months:
-                                filtered_competitions.append(comp)
-                        else:
-                            # Si no se puede parsear, incluirla
-                            filtered_competitions.append(comp)
-                    else:
-                        # Si no tiene formato esperado, incluirla
-                        filtered_competitions.append(comp)
-                except (ValueError, IndexError):
-                    # Si hay error en el parseo, incluirla
+                # Verificar si alguna de las fechas de la competición cae en los meses solicitados
+                include_comp = False
+                for d in comp.dates:
+                    if (d.month, d.year) in months:
+                        include_comp = True
+                        break
+
+                if include_comp:
                     filtered_competitions.append(comp)
 
             logger.info(

@@ -6,6 +6,7 @@ Usa el HTML real del sitio web para validar el parsing correcto.
 import pytest
 
 from src.scraper.web_scraper import WebScraper
+
 SAMPLE_CALENDAR_HTML = """
 <!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml" xml:lang="es-es" lang="es-es" dir="ltr">
@@ -367,7 +368,7 @@ class TestWebScraperReal:
         """Instancia del scraper para tests."""
         return WebScraper()
 
-    def test_parse_real_calendar_html_structure(self, scraper):
+    def test_parse_real_calendar_html_structure(self):
         """Test que el HTML real tiene la estructura esperada."""
         # El HTML debería contener elementos básicos
         assert "table" in SAMPLE_CALENDAR_HTML.lower()
@@ -384,9 +385,9 @@ class TestWebScraperReal:
 
         # Cada competición debería tener estructura básica
         for comp in competitions:
-            assert hasattr(comp, 'name')
-            assert hasattr(comp, 'date_str')
-            assert hasattr(comp, 'pdf_url')
+            assert hasattr(comp, "name")
+            assert hasattr(comp, "date_str")
+            assert hasattr(comp, "pdf_url")
             assert comp.name  # Nombre no vacío
             assert comp.date_str  # Fecha no vacía
 
@@ -398,9 +399,9 @@ class TestWebScraperReal:
 
         for comp in pdf_competitions:
             # Debería ser una URL que termine en .pdf
-            assert comp.pdf_url.endswith('.pdf') or '.pdf' in comp.pdf_url
+            assert comp.pdf_url.endswith(".pdf") or ".pdf" in comp.pdf_url
             # Debería ser una URL absoluta o relativa válida
-            assert 'http' in comp.pdf_url or comp.pdf_url.startswith('/')
+            assert "http" in comp.pdf_url or comp.pdf_url.startswith("/")
 
     def test_parse_real_calendar_date_formats(self, scraper):
         """Test que las fechas tienen el formato esperado."""
@@ -408,10 +409,23 @@ class TestWebScraperReal:
 
         for comp in competitions:
             # Las fechas deberían tener formato DD/MM o similar
-            assert '/' in comp.date_str or any(month in comp.date_str.lower()
-                                             for month in ['enero', 'febrero', 'marzo', 'abril', 'mayo',
-                                                         'junio', 'julio', 'agosto', 'septiembre', 'octubre',
-                                                         'noviembre', 'diciembre'])
+            assert "/" in comp.date_str or any(
+                month in comp.date_str.lower()
+                for month in [
+                    "enero",
+                    "febrero",
+                    "marzo",
+                    "abril",
+                    "mayo",
+                    "junio",
+                    "julio",
+                    "agosto",
+                    "septiembre",
+                    "octubre",
+                    "noviembre",
+                    "diciembre",
+                ]
+            )
 
     def test_parse_real_calendar_no_duplicates_by_name_and_date(self, scraper):
         """Test que no hay duplicados obvios por nombre y fecha."""
@@ -433,4 +447,4 @@ class TestWebScraperReal:
 
         # Debería incluir algunas competiciones conocidas
         # (Esto dependerá del contenido específico del HTML)
-        assert any('gallur' in name or 'madrid' in name for name in competition_names)
+        assert any("gallur" in name or "madrid" in name for name in competition_names)

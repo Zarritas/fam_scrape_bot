@@ -2,8 +2,9 @@
 Tests para soporte de fechas múltiples en competiciones.
 """
 
-import pytest
 from datetime import date
+
+import pytest
 
 from src.database.repositories.competition import CompetitionRepository
 from src.scraper.models import RawCompetition
@@ -41,7 +42,7 @@ class TestMultiDateCompetitions:
             name="Competición Multi-día",
             competition_date=date(2026, 1, 17),
             location="Madrid",
-            fechas_adicionales=additional_dates
+            fechas_adicionales=additional_dates,
         )
 
         # Verificar que se guardaron las fechas adicionales
@@ -63,7 +64,7 @@ class TestMultiDateCompetitions:
             name="Test Competition",
             date_str="17y18.01 (S-D)",
             pdf_url="https://test.com/pdf.pdf",
-            fechas_adicionales=["18/01/2026"]
+            fechas_adicionales=["18/01/2026"],
         )
 
         assert comp.fechas_adicionales == ["18/01/2026"]
@@ -78,7 +79,7 @@ class TestMultiDateCompetitions:
             name="Multi-day Test",
             competition_date=date(2026, 1, 17),
             location="Madrid",
-            fechas_adicionales=[date(2026, 1, 18)]
+            fechas_adicionales=[date(2026, 1, 18)],
         )
 
         assert created1 is True
@@ -91,7 +92,7 @@ class TestMultiDateCompetitions:
             name="Multi-day Test",
             competition_date=date(2026, 1, 17),
             location="Madrid",
-            fechas_adicionales=[date(2026, 1, 18)]
+            fechas_adicionales=[date(2026, 1, 18)],
         )
 
         assert created2 is False  # No creó nueva
@@ -105,7 +106,7 @@ class TestMultiDateCompetitions:
             pdf_hash="single",
             name="Single Day",
             competition_date=date(2026, 1, 17),
-            location="Madrid"
+            location="Madrid",
         )
         assert comp1.fecha_display == "17/01/2026"
 
@@ -116,7 +117,7 @@ class TestMultiDateCompetitions:
             name="Double Day",
             competition_date=date(2026, 1, 17),
             location="Madrid",
-            fechas_adicionales=[date(2026, 1, 18)]
+            fechas_adicionales=[date(2026, 1, 18)],
         )
         assert "17/01" in comp2.fecha_display
         assert "18/01/2026" in comp2.fecha_display
@@ -128,7 +129,7 @@ class TestMultiDateCompetitions:
             name="Triple Day",
             competition_date=date(2026, 1, 17),
             location="Madrid",
-            fechas_adicionales=[date(2026, 1, 18), date(2026, 1, 19)]
+            fechas_adicionales=[date(2026, 1, 18), date(2026, 1, 19)],
         )
         assert "17/01" in comp3.fecha_display
         assert "19/01/2026" in comp3.fecha_display

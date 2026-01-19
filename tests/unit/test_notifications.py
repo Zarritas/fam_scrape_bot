@@ -3,9 +3,9 @@ Tests del sistema de notificaciones automáticas.
 Prueba el job de notificaciones, repositorios y lógica completa.
 """
 
+from datetime import timedelta
+
 import pytest
-from datetime import date, timedelta
-from unittest.mock import AsyncMock, MagicMock
 
 from src.database.repositories.notification import NotificationRepository
 from src.database.repositories.subscription import SubscriptionRepository
@@ -47,11 +47,7 @@ class TestNotificationRepository:
     async def test_log_and_check_notification(self, repo):
         """Test registrar y verificar notificación."""
         # Registrar notificación
-        log = await repo.log_notification(
-            user_id=1,
-            event_id=1,
-            message_hash="test_hash_123"
-        )
+        log = await repo.log_notification(user_id=1, event_id=1, message_hash="test_hash_123")
 
         assert log.user_id == 1
         assert log.event_id == 1
@@ -91,22 +87,22 @@ class TestNotificationRepository:
 
     async def test_cleanup_old_notifications(self, repo):
         """Test limpieza de notificaciones antiguas."""
-        from datetime import datetime, timedelta
+        from datetime import datetime
 
         # Crear notificación antigua (simular cambiando la fecha)
-        old_log = await repo.create(
+        await repo.create(
             user_id=1,
             event_id=1,
             message_hash="old_hash",
-            sent_at=datetime.now() - timedelta(days=40)  # Más de 30 días
+            sent_at=datetime.now() - timedelta(days=40),  # Más de 30 días
         )
 
         # Crear notificación reciente
-        recent_log = await repo.create(
+        await repo.create(
             user_id=1,
             event_id=2,
             message_hash="recent_hash",
-            sent_at=datetime.now()  # Hoy
+            sent_at=datetime.now(),  # Hoy
         )
 
         # Ejecutar limpieza (30 días por defecto)
@@ -134,6 +130,7 @@ class TestSubscriptionRepository:
     async def user(self, db_session):
         """Usuario de prueba."""
         from src.database.repositories.user import UserRepository
+
         user_repo = UserRepository(db_session)
         return await user_repo.create(telegram_id=123456789)
 
@@ -145,11 +142,7 @@ class TestSubscriptionRepository:
     async def test_subscribe_and_get_users(self, repo, user):
         """Test suscribir usuario y obtener lista de suscritos."""
         # Suscribir usuario
-        subscription, is_new = await repo.subscribe(
-            user_id=user.id,
-            discipline="100m",
-            sex="M"
-        )
+        subscription, is_new = await repo.subscribe(user_id=user.id, discipline="100m", sex="M")
 
         assert is_new is True
         assert subscription.discipline == "100m"

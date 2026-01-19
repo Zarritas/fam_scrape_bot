@@ -34,15 +34,12 @@ class RawCompetition:
     """
 
     name: str
-    date_str: str  # Fecha como string (ej: "11 de enero" o "11/01")
+    dates: list[date] = field(default_factory=list)
     pdf_url: str | None = None
     has_modifications: bool = False  # Si tiene fondo amarillo/verde
     enrollment_url: str | None = None
     location: str | None = None
     competition_type: str | None = None  # Tipo: PC, AL, C, M, R, etc.
-    fechas_adicionales: list[str] = field(
-        default_factory=list
-    )  # Fechas adicionales en formato "DD/MM/YYYY"
 
     def __post_init__(self) -> None:
         # Asegurar URL absoluta
@@ -87,7 +84,7 @@ class Competition:
     """
 
     name: str
-    competition_date: date
+    dates: list[date]
     location: str
     pdf_url: str | None = None
     enrollment_url: str | None = None
@@ -95,6 +92,11 @@ class Competition:
     has_modifications: bool = False
     competition_type: str | None = None
     events: list[Event] = field(default_factory=list)
+
+    @property
+    def competition_date(self) -> date:
+        """Retorna la primera fecha para compatibilidad."""
+        return self.dates[0] if self.dates else date.today()
 
     def get_events_by_type(self, event_type: EventType) -> list[Event]:
         """Filtra pruebas por tipo (carrera/concurso)."""
@@ -153,6 +155,7 @@ DISCIPLINE_ALIASES: dict[str, str] = {
     "salto con pértiga": "Pértiga",
     "pértiga": "Pértiga",
     "pertiga": "Pértiga",
+    "púrtiga": "Pértiga",  # Artifact encoding
     "lanzamiento de peso": "Peso",
     "peso": "Peso",
     "lanzamiento de disco": "Disco",

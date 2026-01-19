@@ -9,6 +9,7 @@ Jobs:
 from datetime import date, timedelta
 
 from src.database.engine import get_session, get_session_factory
+from src.database.models import Competition
 from src.database.repositories import (
     CompetitionRepository,
     ErrorRepository,
@@ -18,7 +19,7 @@ from src.database.repositories import (
 from src.scraper.models import RawCompetition
 from src.scraper.pdf_parser import PDFParser
 from src.scraper.web_scraper import WebScraper, get_current_and_next_months
-from src.utils.hash import calculate_message_hash
+from src.utils.hash import calculate_message_hash, calculate_pdf_hash
 from src.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -36,12 +37,11 @@ def validate_competition_data(raw_comp: RawCompetition) -> dict:
     """
     return {
         "name": str(raw_comp.name or "Competición sin nombre")[:255],
-        "date_str": str(raw_comp.date_str or "")[:100],
+        "dates": [d.isoformat() for d in raw_comp.dates],
         "location": str(raw_comp.location or "Madrid")[:255],
         "pdf_url": raw_comp.pdf_url,
         "enrollment_url": raw_comp.enrollment_url,
         "competition_type": raw_comp.competition_type,
-        "fechas_adicionales": raw_comp.fechas_adicionales or [],
     }
 
 
@@ -72,7 +72,7 @@ async def scraping_job() -> dict:
     }
 
     scraper = WebScraper()
-    parser = PDFParser()
+    # parser = PDFParser() # PDF parsing disabled for now or inside loop if needed
 
     try:
         # Obtener meses a scrapear
@@ -93,80 +93,60 @@ async def scraping_job() -> dict:
                     for raw_comp in raw_competitions:
                         try:
                             # 1. Determinar si es un PDF o link externo
-                            is_pdf = raw_comp.pdf_url and ".pdf" in raw_comp.pdf_url.lower()
-
+                            # is_pdf = raw_comp.pdf_url and ".pdf" in raw_comp.pdf_url.lower()
                             competition = None
                             pdf_content = None
 
-                            if is_pdf and raw_comp.pdf_url is not None:
+                            # Usar las fechas ya parseadas por el scraper
+                            dates = raw_comp.dates
+
+                            if not dates:
+                                # Skip competitions without valid date
+                                logger.warning(
+                                    f"Omitting competition '{raw_comp.name}' due to missing dates"
+                                )
+                                continue
+
+                            events = []
+                            # Si es PDF, intentar parsear eventos
+                            if raw_comp.pdf_url and ".pdf" in raw_comp.pdf_url.lower():
                                 try:
-                                    # Descargar y parsear PDF
+                                    # Descargar y parsear PDF solo para eventos
                                     pdf_content = scraper.download_pdf(raw_comp.pdf_url)
-                                    competition = parser.parse(
+
+                                    # Instanciar parser aquí o fuera (mejor fuera para eficiencia, pero lo comenté.
+                                    # Lo re-instanciaré aquí por simplicidad o recuperaré la instancia de fuera)
+                                    parser = PDFParser()
+
+                                    pdf_competition = parser.parse(
                                         pdf_content=pdf_content,
-                                        name=raw_comp.name,
-                                        pdf_url=raw_comp.pdf_url,
-                                        enrollment_url=raw_comp.enrollment_url,
-                                        has_modifications=raw_comp.has_modifications,
-                                        competition_type=raw_comp.competition_type,
+                                        name="",
+                                        pdf_url="",
+                                        enrollment_url=None,
+                                        has_modifications=False,
+                                        competition_type=None,
                                     )
+                                    events = pdf_competition.events
                                 except Exception as e:
                                     logger.warning(
-                                        f"Error parseando PDF de {raw_comp.name}: {e}. Usando datos básicos."
+                                        f"Error parseando PDF de {raw_comp.name}: {e}. Sin eventos."
                                     )
 
-                            # 2. Si no es PDF o falló el parseo, usar datos básicos del calendario
-                            if not competition:
-                                from src.scraper.models import Competition
-                                from src.utils.hash import calculate_pdf_hash
+                            # Crear competición con datos de la web
+                            pdf_hash = None
+                            if pdf_content:
+                                pdf_hash = calculate_pdf_hash(pdf_content)  # type: ignore
 
-                                # Normalizar fecha de raw_comp.date_str si fuera necesario
-                                # pero el repo ya recibe la fecha como date si la tenemos
-                                # Intentamos extraer una fecha date de raw_comp.date_str simplificada
-                                try:
-                                    # Manejar múltiples formatos de fecha de forma segura
-                                    date_str = (
-                                        raw_comp.date_str.strip() if raw_comp.date_str else ""
-                                    )
-
-                                    if "/" in date_str:
-                                        parts = date_str.split("/")
-                                        if len(parts) >= 2:
-                                            # Extraer solo números de day y month
-                                            day_part = "".join(c for c in parts[0] if c.isdigit())
-                                            month_part = "".join(c for c in parts[1] if c.isdigit())
-
-                                            if day_part and month_part:
-                                                day = int(day_part)
-                                                month_num = int(month_part)
-                                                comp_date = date(year, month_num, day)
-                                            else:
-                                                comp_date = date(year, month, 1)
-                                        else:
-                                            comp_date = date(year, month, 1)
-                                    else:
-                                        # Fecha en formato no parseable (ej: texto largo)
-                                        comp_date = date(year, month, 1)
-                                except (ValueError, IndexError, AttributeError):
-                                    # Fallback seguro para cualquier error de parsing
-                                    comp_date = date(year, month, 1)
-                                    logger.warning(
-                                        f"Fecha no parseable '{raw_comp.date_str}' para {raw_comp.name}, usando fallback"
-                                    )
-
-                                competition = Competition(
-                                    name=raw_comp.name,
-                                    competition_date=comp_date,
-                                    location=raw_comp.location or "Madrid",
-                                    pdf_url=raw_comp.pdf_url,
-                                    enrollment_url=raw_comp.enrollment_url,
-                                    pdf_hash=calculate_pdf_hash(pdf_content)
-                                    if pdf_content
-                                    else None,
-                                    has_modifications=raw_comp.has_modifications,
-                                    competition_type=raw_comp.competition_type,
-                                    events=[],
-                                )
+                            competition = Competition(  # type: ignore
+                                name=raw_comp.name,
+                                location=raw_comp.location or "Madrid",
+                                pdf_url=raw_comp.pdf_url,
+                                enrollment_url=raw_comp.enrollment_url,
+                                pdf_hash=pdf_hash,
+                                has_modifications=raw_comp.has_modifications,
+                                competition_type=raw_comp.competition_type,
+                            )
+                            competition.todas_las_fechas = dates
 
                             # 3. Preparar datos de eventos
                             events_data = [
@@ -177,63 +157,20 @@ async def scraping_job() -> dict:
                                     "scheduled_time": e.scheduled_time,
                                     "category": e.category,
                                 }
-                                for e in competition.events
+                                for e in events
                             ]
-
-                            # Preparar fechas adicionales
-                            fechas_adicionales_parsed = None
-                            if (
-                                hasattr(raw_comp, "fechas_adicionales")
-                                and raw_comp.fechas_adicionales
-                            ):
-                                try:
-                                    fechas_adicionales_parsed = []
-                                    for fecha_str in raw_comp.fechas_adicionales:
-                                        if not fecha_str or not isinstance(fecha_str, str):
-                                            continue
-
-                                        # Convertir "DD/MM/YYYY" a date object de forma segura
-                                        parts = fecha_str.split("/")
-                                        if len(parts) == 3:
-                                            try:
-                                                day_str, month_str, year_str = parts
-                                                # Extraer solo dígitos para evitar errores
-                                                day = int(
-                                                    "".join(c for c in day_str if c.isdigit())
-                                                )
-                                                month_val = int(
-                                                    "".join(c for c in month_str if c.isdigit())
-                                                )
-                                                year_val = int(
-                                                    "".join(c for c in year_str if c.isdigit())
-                                                )
-
-                                                if (
-                                                    1 <= day <= 31
-                                                    and 1 <= month_val <= 12
-                                                    and year_val >= 2000
-                                                ):
-                                                    fecha_obj = date(year_val, month_val, day)
-                                                    fechas_adicionales_parsed.append(fecha_obj)
-                                            except (ValueError, IndexError):
-                                                # Skip fechas inválidas silenciosamente
-                                                continue
-                                except Exception as e:
-                                    logger.warning(f"Error parseando fechas adicionales: {e}")
-                                    fechas_adicionales_parsed = None
 
                             # 4. Guardar en BD (upsert)
                             _, is_new_or_updated = await comp_repo.upsert_with_hash(
                                 pdf_url=competition.pdf_url,
                                 pdf_hash=competition.pdf_hash,
                                 name=competition.name,
-                                competition_date=competition.competition_date,
+                                dates=competition.todas_las_fechas,
                                 location=competition.location,
                                 has_modifications=competition.has_modifications,
                                 competition_type=competition.competition_type,
                                 enrollment_url=competition.enrollment_url,
                                 events=events_data,
-                                fechas_adicionales=fechas_adicionales_parsed,
                             )
 
                             if is_new_or_updated:
@@ -249,16 +186,7 @@ async def scraping_job() -> dict:
                             logger.error(
                                 f"Error procesando competición '{raw_comp.name}': {type(e).__name__}: {e}"
                             )
-                            logger.error(
-                                f"  Datos de competición: date_str='{raw_comp.date_str}', pdf_url='{raw_comp.pdf_url}'"
-                            )
-
-                            # Log additional context for debugging
-                            if (
-                                hasattr(raw_comp, "fechas_adicionales")
-                                and raw_comp.fechas_adicionales
-                            ):
-                                logger.error(f"  Fechas adicionales: {raw_comp.fechas_adicionales}")
+                            logger.error(f"  Datos de competición: pdf_url='{raw_comp.pdf_url}'")
 
                             await error_repo.log_error(
                                 component="scraper",
@@ -355,7 +283,7 @@ async def notification_job(bot=None) -> dict:
 
             # Obtener competiciones futuras y filtrar las de mañana
             all_future = await comp_repo.get_upcoming(from_date=today)
-            competitions = [c for c in all_future if c.competition_date == tomorrow]
+            competitions = [c for c in all_future if tomorrow in c.todas_las_fechas]
 
             logger.info(f"Encontradas {len(competitions)} competiciones para mañana")
 

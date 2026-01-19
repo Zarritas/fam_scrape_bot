@@ -4,17 +4,16 @@ Tests de integración para comandos de suscripción.
 Estos tests verifican el flujo completo de comandos, no solo el repositorio.
 """
 
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
-from telegram import Update, User as TelegramUser, Message, CallbackQuery
+import pytest
+from telegram import CallbackQuery, Message, Update
+from telegram import User as TelegramUser
 from telegram.ext import ContextTypes
 
 from src.bot.handlers.subscriptions import (
     subscribe_command,
-    subscriptions_command,
     unsubscribe_callback,
-    smart_subscribe_callback,
 )
 
 
@@ -25,6 +24,7 @@ class TestSubscriptionCommands:
     async def test_user(self, db_session):
         """Usuario de prueba."""
         from src.database.repositories.user import UserRepository
+
         user_repo = UserRepository(db_session)
         return await user_repo.create(telegram_id=123456789)
 
@@ -57,7 +57,7 @@ class TestSubscriptionCommands:
         update.callback_query.data = ""
         return update
 
-    async def test_subscribe_command_no_args(self, mock_update, mock_context, db_session):
+    async def test_subscribe_command_no_args(self, mock_update, mock_context):
         """Test comando /suscribirse sin argumentos."""
         # Setup
         mock_context.args = []
@@ -70,7 +70,7 @@ class TestSubscriptionCommands:
         call_args = mock_update.message.reply_text.call_args[0][0]
         assert "Sintaxis incorrecta" in call_args
 
-    async def test_subscribe_command_invalid_sex(self, mock_update, mock_context, db_session):
+    async def test_subscribe_command_invalid_sex(self, mock_update, mock_context):
         """Test comando /suscribirse con sexo inválido."""
         # Setup
         mock_context.args = ["400m", "X"]
@@ -87,7 +87,7 @@ class TestSubscriptionCommands:
     # Integration tests require complex database mocking that's not worth the effort
     # since unit tests already validate the core functionality
 
-    async def test_unsubscribe_callback_invalid_data(self, mock_query_update, db_session):
+    async def test_unsubscribe_callback_invalid_data(self, mock_query_update):
         """Test callback de desuscripción con datos inválidos."""
         # Setup
         mock_query_update.callback_query.data = "invalid"

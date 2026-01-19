@@ -12,18 +12,13 @@ Usage:
 
 import subprocess
 import sys
-from pathlib import Path
 
 
 def run_command(cmd, capture_output=True, text=True):
     """Run a command and return the result."""
     try:
         result = subprocess.run(
-            cmd,
-            shell=True,
-            capture_output=capture_output,
-            text=text,
-            check=False
+            cmd, shell=True, capture_output=capture_output, text=text, check=False
         )
         return result.returncode == 0, result.stdout, result.stderr
     except Exception as e:
@@ -54,7 +49,7 @@ def main():
         print("❌ Error: Could not get staged files from git", file=sys.stderr)
         return 1
 
-    staged_files = [f for f in stdout.strip().split('\n') if f.strip() and f.endswith('.py')]
+    staged_files = [f for f in stdout.strip().split("\n") if f.strip() and f.endswith(".py")]
 
     if not staged_files:
         print("ℹ️  No Python files staged for commit. Skipping checks.", file=sys.stderr)
@@ -66,7 +61,7 @@ def main():
     print(file=sys.stderr)
 
     # Convert to space-separated string for ruff
-    files_str = ' '.join(f'"{f}"' for f in staged_files)
+    files_str = " ".join(f'"{f}"' for f in staged_files)
 
     # Run Ruff format check
     print("🎨 Checking code formatting...", file=sys.stderr)
@@ -74,11 +69,15 @@ def main():
     if not success:
         print(file=sys.stderr)
         print("❌ Code formatting issues found!", file=sys.stderr)
-        print("Run 'ruff format' to fix formatting issues, then stage the changes.", file=sys.stderr)
+        print(
+            "Run 'ruff format' to fix formatting issues, then stage the changes.", file=sys.stderr
+        )
         print(file=sys.stderr)
         print("Commands:", file=sys.stderr)
         print("  ruff format .                    # Format all files", file=sys.stderr)
-        print("  ruff format --check .           # Check formatting without fixing", file=sys.stderr)
+        print(
+            "  ruff format --check .           # Check formatting without fixing", file=sys.stderr
+        )
         print("  git add .                       # Stage the formatted files", file=sys.stderr)
         if stderr:
             print(file=sys.stderr)
@@ -92,7 +91,10 @@ def main():
     if not success:
         print(file=sys.stderr)
         print("❌ Linting issues found!", file=sys.stderr)
-        print("Fix the issues manually or run 'ruff check --fix' to auto-fix what can be fixed.", file=sys.stderr)
+        print(
+            "Fix the issues manually or run 'ruff check --fix' to auto-fix what can be fixed.",
+            file=sys.stderr,
+        )
         print(file=sys.stderr)
         print("Commands:", file=sys.stderr)
         print("  ruff check .                    # Check all files", file=sys.stderr)

@@ -16,9 +16,6 @@ from src.utils.logging import get_logger
 logger = get_logger(__name__)
 
 
-
-
-
 async def subscriptions_command(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,  # noqa: ARG001

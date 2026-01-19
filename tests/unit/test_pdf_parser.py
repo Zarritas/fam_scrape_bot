@@ -2,7 +2,7 @@
 Tests unitarios para el PDF parser.
 """
 
-from datetime import date, time
+from datetime import date
 
 import pytest
 
@@ -27,10 +27,11 @@ class TestPDFParser:
 
         result = parser._extract_date(text)
 
-        assert result is not None
-        assert result.day == 11
-        assert result.month == 1
-        assert result.year == 2026
+        assert len(result) == 1
+        date_obj = result[0]
+        assert date_obj.day == 11
+        assert date_obj.month == 1
+        assert date_obj.year == 2026
 
     def test_extract_date_numeric_format(self):
         """Test extracción de fecha en formato numérico."""
@@ -39,10 +40,11 @@ class TestPDFParser:
 
         result = parser._extract_date(text)
 
-        assert result is not None
-        assert result.day == 15
-        assert result.month == 3
-        assert result.year == 2026
+        assert len(result) == 1
+        date_obj = result[0]
+        assert date_obj.day == 15
+        assert date_obj.month == 3
+        assert date_obj.year == 2026
 
     def test_extract_location(self):
         """Test extracción de lugar."""
@@ -92,8 +94,6 @@ class TestPDFParser:
         assert "60" in event.discipline
         assert event.sex == Sex.MASCULINO
         assert event.scheduled_time is not None
-
-
 
 
 class TestNormalizeDiscipline:
@@ -198,7 +198,7 @@ class TestCompetition:
         """Competición de ejemplo con pruebas."""
         return Competition(
             name="Control de Pista",
-            competition_date=date(2026, 1, 11),
+            dates=[date(2026, 1, 11)],
             location="Gallur",
             pdf_url="https://example.com/test.pdf",
             pdf_hash="abc123",

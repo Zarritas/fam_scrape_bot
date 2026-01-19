@@ -2,6 +2,7 @@
 Repositorio para competiciones.
 """
 
+import json
 from collections.abc import Sequence
 from datetime import date
 
@@ -53,7 +54,7 @@ class CompetitionRepository(BaseRepository[Competition]):
         from_date: date | None = None,
     ) -> Sequence[Competition]:
         """
-        Obtiene competiciones con fecha >= from_date.
+        Obtiene competiciones con alguna fecha >= from_date.
 
         Si from_date es None, usa la fecha actual.
         """
@@ -61,39 +62,45 @@ class CompetitionRepository(BaseRepository[Competition]):
             from_date = date.today()
 
         result = await self.session.execute(
-            select(Competition)
-            .where(Competition.competition_date >= from_date)
-            .order_by(Competition.competition_date)
-            .options(selectinload(Competition.events))
+            select(Competition).options(selectinload(Competition.events))
         )
-        return result.scalars().all()
+        all_competitions = result.scalars().all()
+
+        # Filtrar competiciones que tienen al menos una fecha >= from_date
+        upcoming = [
+            comp for comp in all_competitions if any(d >= from_date for d in comp.todas_las_fechas)
+        ]
+
+        # Ordenar por la primera fecha
+        upcoming.sort(key=lambda c: c.todas_las_fechas[0] if c.todas_las_fechas else date.max)
+
+        return upcoming
 
     async def upsert_with_hash(
         self,
         pdf_url: str | None,
         pdf_hash: str | None,
         name: str,
-        competition_date: date,
+        dates: list[date],
         location: str,
         has_modifications: bool = False,
         competition_type: str | None = None,
         enrollment_url: str | None = None,
         events: list[dict] | None = None,
-        fechas_adicionales: list[date] | None = None,
     ) -> tuple[Competition, bool]:
         """
-        Inserta o actualiza una competición basándose en el hash del PDF o nombre/fecha.
+        Inserta o actualiza una competición basándose en el hash del PDF o nombre/fechas.
 
         Si el PDF ya existe con el mismo hash, no hace nada.
         Si el PDF existe pero el hash cambió, actualiza.
-        Si no hay PDF, busca por nombre y fecha para evitar duplicados.
+        Si no hay PDF, busca por nombre y primera fecha para evitar duplicados.
         Si no existe, lo crea.
 
         Args:
             pdf_url: URL del PDF
             pdf_hash: Hash SHA-256 del contenido del PDF
             name: Nombre de la competición
-            competition_date: Fecha de la competición
+            dates: Lista de fechas de la competición
             location: Lugar
             has_modifications: Si tiene marcador de modificaciones
             competition_type: Tipo de competición (PC, AL, etc.)
@@ -109,10 +116,10 @@ class CompetitionRepository(BaseRepository[Competition]):
             # Si hay PDF, buscar por URL y nombre
             existing = await self.get_by_pdf_url_and_name(pdf_url, name)
         else:
-            # Si no hay PDF, buscar por nombre y fecha para evitar duplicados
+            # Si no hay PDF, buscar por nombre para evitar duplicados
             result = await self.session.execute(
                 select(Competition)
-                .where(Competition.name == name, Competition.competition_date == competition_date)
+                .where(Competition.name == name)
                 .options(selectinload(Competition.events))
             )
             existing = result.scalar_one_or_none()
@@ -127,20 +134,19 @@ class CompetitionRepository(BaseRepository[Competition]):
 
             # Actualizar
             # Nota: Si solo cambia el enrollment_url, también actualizamos
+            # Serializar fechas para el campo JSON
+            dates_json = json.dumps([d.isoformat() for d in sorted(set(dates))])
+
             await self.update(
                 existing,
                 pdf_hash=pdf_hash,
                 name=name,
-                competition_date=competition_date,
+                competition_date=dates_json,
                 location=location,
                 has_modifications=has_modifications,
                 competition_type=competition_type,
                 enrollment_url=enrollment_url,
             )
-
-            # Actualizar fechas adicionales
-            if fechas_adicionales is not None:
-                existing.fechas_adicionales_list = fechas_adicionales
 
             # Eliminar eventos antiguos y crear nuevos
             if events is not None:
@@ -157,11 +163,14 @@ class CompetitionRepository(BaseRepository[Competition]):
             return existing, True
 
         # No existe - crear nueva
+        # Serializar fechas para el campo JSON
+        dates_json = json.dumps([d.isoformat() for d in sorted(set(dates))])
+
         competition = await self.create(
             pdf_url=pdf_url,
             pdf_hash=pdf_hash,
             name=name,
-            competition_date=competition_date,
+            competition_date=dates_json,
             location=location,
             has_modifications=has_modifications,
             competition_type=competition_type,
@@ -174,10 +183,6 @@ class CompetitionRepository(BaseRepository[Competition]):
                 event = Event(competition_id=competition.id, **event_data)
                 self.session.add(event)
             await self.session.flush()
-
-        # Establecer fechas adicionales
-        if fechas_adicionales is not None:
-            competition.fechas_adicionales_list = fechas_adicionales
 
         return competition, True
 
@@ -192,15 +197,8 @@ class CompetitionRepository(BaseRepository[Competition]):
 
     async def count_upcoming(self, from_date: date | None = None) -> int:
         """Cuenta competiciones futuras."""
-        if from_date is None:
-            from_date = date.today()
-
-        from sqlalchemy import func
-
-        result = await self.session.execute(
-            select(func.count(Competition.id)).where(Competition.competition_date >= from_date)
-        )
-        return result.scalar_one()
+        upcoming = await self.get_upcoming(from_date)
+        return len(upcoming)
 
     async def get_by_event_type(
         self,
@@ -222,50 +220,73 @@ class CompetitionRepository(BaseRepository[Competition]):
         stmt = (
             select(Competition)
             .join(Competition.events)
-            .where(
-                Competition.competition_date >= from_date,
-                Event.discipline == discipline,
-            )
+            .where(Event.discipline == discipline)
             .options(selectinload(Competition.events))
             .distinct()
-            .order_by(Competition.competition_date)
         )
 
         if sex != "B":
             stmt = stmt.where(Event.sex == sex)
 
         result = await self.session.execute(stmt)
-        return result.scalars().all()
+        all_competitions = result.scalars().all()
+
+        # Filtrar por fecha
+        filtered = [
+            comp for comp in all_competitions if any(d >= from_date for d in comp.todas_las_fechas)
+        ]
+
+        # Ordenar por primera fecha
+        filtered.sort(key=lambda c: c.todas_las_fechas[0] if c.todas_las_fechas else date.max)
+
+        return filtered
 
     async def get_by_exact_date(self, target_date: date) -> Sequence[Competition]:
         """Obtiene competiciones para una fecha específica."""
         result = await self.session.execute(
-            select(Competition)
-            .where(Competition.competition_date == target_date)
-            .options(selectinload(Competition.events))
+            select(Competition).options(selectinload(Competition.events))
         )
-        return result.scalars().all()
+        all_competitions = result.scalars().all()
+
+        # Filtrar competiciones que tienen la fecha exacta
+        filtered = [comp for comp in all_competitions if target_date in comp.todas_las_fechas]
+
+        return filtered
 
     async def delete_past_competitions(self, before_date: date) -> int:
         """
-        Elimina competiciones con fecha anterior a before_date.
+        Elimina competiciones con todas las fechas anteriores a before_date.
 
         Returns:
             Número de competiciones eliminadas.
         """
+        import logging
+
         from sqlalchemy import delete
 
-        # Obtener IDs de competiciones a eliminar
-        result = await self.session.execute(
-            select(Competition.id).where(Competition.competition_date < before_date)
-        )
-        competition_ids = result.scalars().all()
+        logger = logging.getLogger(__name__)
 
-        if not competition_ids:
+        # Obtener todas las competiciones
+        result = await self.session.execute(select(Competition))
+        all_competitions = result.scalars().all()
+
+        # Filtrar competiciones a eliminar (todas las fechas < before_date)
+        to_delete = [
+            comp for comp in all_competitions if all(d < before_date for d in comp.todas_las_fechas)
+        ]
+
+        if not to_delete:
             return 0
 
-        # Eliminar competiciones (los eventos se eliminan automáticamente por cascade)
-        delete_stmt = delete(Competition).where(Competition.competition_date < before_date)
+        # Log the competitions being deleted
+        for comp in to_delete:
+            logger.info(
+                f"Eliminando competición pasada: {comp.name} (fechas: {comp.todas_las_fechas})"
+            )
+
+        # Eliminar competiciones
+        competition_ids = [comp.id for comp in to_delete]
+        delete_stmt = delete(Competition).where(Competition.id.in_(competition_ids))
         result = await self.session.execute(delete_stmt)
 
-        return result.rowcount
+        return len(to_delete)

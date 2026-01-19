@@ -112,12 +112,12 @@ class PDFParser:
 
                 # Extraer información básica
                 location = self._extract_location(full_text)
-                competition_date = self._extract_date(full_text)
+                dates = self._extract_date(full_text)
 
-                # Si no se pudo extraer fecha, usar fecha por defecto
-                if not competition_date:
-                    competition_date = date.today()
-                    logger.warning("No se pudo extraer fecha, usando fecha actual")
+                # Si no se pudieron extraer fechas, usar fecha por defecto
+                if not dates:
+                    dates = [date.today()]
+                    logger.warning("No se pudieron extraer fechas, usando fecha actual")
 
                 # Extraer eventos de las tablas
                 events = self._extract_events_from_tables(all_tables)
@@ -129,7 +129,7 @@ class PDFParser:
                 # Crear objeto Competition
                 competition = Competition(
                     name=name,
-                    competition_date=competition_date,
+                    dates=dates,
                     location=location or "Madrid",
                     pdf_url=pdf_url,
                     enrollment_url=enrollment_url,
@@ -187,8 +187,8 @@ class PDFParser:
 
         return None
 
-    def _extract_date(self, text: str) -> date | None:
-        """Extrae la fecha de la competición."""
+    def _extract_date(self, text: str) -> list[date]:
+        """Extrae todas las fechas de la competición."""
         # Buscar diferentes patrones de fecha
         patterns = [
             r"DIA:\s*(.+?)(?:\n|$)",  # DIA: formato
@@ -204,27 +204,34 @@ class PDFParser:
                 break
 
         if not date_str:
-            return None
+            return []
+
+        dates = []
 
         # Intentar diferentes formatos de fecha
         # Formato: 03/01/2026
         date_match = re.search(r"(\d{1,2})[/-](\d{1,2})[/-](\d{4})", date_str)
         if date_match:
             day, month, year = date_match.groups()
-            try:
-                return date(int(year), int(month), int(day))
-            except ValueError:
-                pass
+            with contextlib.suppress(ValueError):
+                dates.append(date(int(year), int(month), int(day)))
 
-        # Formato: 17 y 18/01/2026
-        date_match = re.search(r"(\d{1,2})\s*y\s*(\d{1,2})[/-](\d{1,2})[/-](\d{4})", date_str)
-        if date_match:
-            # Para fechas múltiples, usar la primera fecha
-            day1, day2, month, year = date_match.groups()
-            try:
-                return date(int(year), int(month), int(day1))
-            except ValueError:
-                pass
+        # Formato: 17 y 18/01/2026 o 17, 18 y 19/01/2026
+        # Solo si contiene separadores de múltiples días
+        if "y" in date_str or "," in date_str:
+            multi_day_match = re.findall(r"(\d{1,2})\s*[,\s]*", date_str)
+            if len(multi_day_match) > 1:
+                # Extraer mes y año comunes
+                month_year_match = re.search(r"[/-](\d{1,2})[/-](\d{4})", date_str)
+                if month_year_match:
+                    month, year = month_year_match.groups()
+                    for day_str in multi_day_match:
+                        try:
+                            dates.append(date(int(year), int(month), int(day_str)))
+                        except ValueError:
+                            continue
+                    if dates:
+                        return sorted(dates)
 
         # Formato: 11 de enero de 2026
         date_match = re.search(r"(\d{1,2})\s*de\s+(\w+)\s*de\s+(\d{4})", date_str, re.IGNORECASE)
@@ -232,24 +239,35 @@ class PDFParser:
             day, month_name, year = date_match.groups()
             month = self.MONTHS_ES.get(month_name.lower())
             if month:
-                try:
-                    return date(int(year), month, int(day))
-                except ValueError:
-                    pass
+                with contextlib.suppress(ValueError):
+                    dates.append(date(int(year), month, int(day)))
 
-        return None
+        return dates
 
     def _extract_events_from_tables(self, tables: list) -> list[Event]:
         """Extrae eventos de las tablas del PDF."""
         events = []
 
         for table in tables:
-            if not table or len(table) < 2:
+            if not table or len(table) < 1:
                 continue
 
             # Determinar el formato de la tabla
             header = table[0] if table[0] else []
             header_text = " ".join(str(cell).strip() for cell in header if cell).upper()
+
+            # Si tiene solo 1 fila, solo puede ser "Formato 3" (Evento individual)
+            if len(table) == 1:
+                # Ir directamente a Strategy 1 (parsear header como evento)
+                # Pero primero verificamos que no sea un header suelto de otra cosa
+                if not any(k in header_text for k in ["CARRERAS", "CONCURSOS", "HORARIO"]):
+                    try:
+                        event = self._parse_event_header(header)
+                        if event:
+                            events.append(event)
+                    except Exception as e:
+                        logger.warning(f"Error procesando tabla de 1 fila: {e}")
+                continue
 
             # Formato 1: Headers de sección ("CARRERAS", "CONCURSOS")
             if "CARRERAS" in header_text:
@@ -278,6 +296,52 @@ class PDFParser:
                             events.append(event)
                     except Exception as e:
                         logger.warning(f"Error procesando fila de evento: {e}")
+                        continue
+
+            # Formato 1b: Headers de horario ("HORARIO", "HORARIO PROVISIONAL")
+            elif "HORARIO" in header_text or "HORARIO PROVISIONAL" in header_text:
+                # Procesar como tabla de horario general, auto-detectar tipos
+                for row in table[1:]:
+                    if not row or len(row) < 3:
+                        continue
+                    try:
+                        # Auto-detectar tipo por contenido de la fila
+                        row_text = " ".join(str(cell) for cell in row if cell).upper()
+                        if any(
+                            keyword in row_text
+                            for keyword in [
+                                "SERIE",
+                                "CARRERA",
+                                "METROS",
+                                "60M",
+                                "100M",
+                                "200M",
+                                "400M",
+                            ]
+                        ):
+                            event_type = EventType.CARRERA
+                        elif any(
+                            keyword in row_text
+                            for keyword in [
+                                "ALTURA",
+                                "PESO",
+                                "DISCO",
+                                "PÉRTIGA",
+                                "LONGITUD",
+                                "TRIPLE",
+                                "MARTILLO",
+                                "JABALINA",
+                            ]
+                        ):
+                            event_type = EventType.CONCURSO
+                        else:
+                            continue
+
+                        event = self._parse_event_row(row, event_type)
+                        if event:
+                            events.append(event)
+                    except Exception as e:
+                        logger.warning(f"Error procesando fila de horario: {e}")
                         continue
 
             # Formato 2: Tabla de test con header ["Prueba", "Sexo", "Hora", "Categoría"]
@@ -411,23 +475,35 @@ class PDFParser:
 
         header_text = [str(cell).strip() for cell in header if cell and str(cell).strip()]
 
-        if len(header_text) < 3:
+        if len(header_text) < 2:
             return None
 
-        # El penúltimo campo suele ser el sexo
-        sex_str = header_text[-2] if len(header_text) >= 2 else ""
-        if sex_str.upper() == "M":
-            sex = Sex.MASCULINO
-        elif sex_str.upper() == "F":
-            sex = Sex.FEMENINO
-        else:
-            sex = Sex.MASCULINO  # default
+        # Estrategia dinámica para encontrar Sexo y Disciplina
+        sex = Sex.MASCULINO  # default
+        discipline_index = -1
 
-        # El antepenúltimo campo suele ser la disciplina
-        discipline_str = header_text[-3] if len(header_text) >= 3 else ""
+        # Comprobar si el último elemento es Sexo
+        if header_text[-1].upper() in ["M", "F"]:
+            sex = Sex.MASCULINO if header_text[-1].upper() == "M" else Sex.FEMENINO
+            # Si el último es sexo, el anterior suele ser disciplina
+            discipline_index = -2
+        # Comprobar si el penúltimo es sexo (caso con categoría/serie al final)
+        elif len(header_text) >= 2 and header_text[-2].upper() in ["M", "F"]:
+            sex = Sex.MASCULINO if header_text[-2].upper() == "M" else Sex.FEMENINO
+            discipline_index = -3
+
+        # Si no encontramos sexo claro, quizas es una fila de solo texto o formato desconocido,
+        # pero mantenemos el default y probamos buscar disciplina
+
+        if discipline_index < -len(header_text):
+            return None
+
+        discipline_str = header_text[discipline_index]
         discipline = normalize_discipline(discipline_str)
 
         if not discipline:
+            # Intentar otros indices si falló
+            # A veces la disciplina está antes del tiempo? Raro.
             return None
 
         # Determinar tipo de evento
@@ -471,7 +547,7 @@ class PDFParser:
         # Extraer hora del primer campo si existe
         scheduled_time = None
         first_cell = header_text[0]
-        time_match = re.search(r"(\d{1,2}):(\d{2})", first_cell)
+        time_match = re.search(r"(\d{1,2})[.:](\d{2})", first_cell)
         if time_match:
             hour, minute = time_match.groups()
             with contextlib.suppress(ValueError):
@@ -511,8 +587,8 @@ class PDFParser:
         category = ""
 
         for cell in row_text:
-            # Buscar hora (HH:MM)
-            time_match = re.search(r"(\d{1,2}):(\d{2})", cell)
+            # Buscar hora (HH:MM o HH.MM)
+            time_match = re.search(r"(\d{1,2})[.:](\d{2})", cell)
             if time_match and not scheduled_time:
                 hour, minute = time_match.groups()
                 with contextlib.suppress(ValueError):
@@ -520,7 +596,7 @@ class PDFParser:
 
         # Extraer disciplina, sexo y categoría de los campos restantes
         remaining_cells = [
-            cell for cell in row_text if cell and not re.search(r"(\d{1,2}):(\d{2})", cell)
+            cell for cell in row_text if cell and not re.search(r"(\d{1,2})[.:](\d{2})", cell)
         ]
 
         for cell in remaining_cells:
